@@ -330,18 +330,33 @@ function normalizeImported(raw) {
   };
 }
 
-/* 按 id 合并：同 id 覆盖（来源为准），新 id 追加；不删除本地已有条目 */
+/* 按 id 合并：同 id 覆盖（来源为准），新 id 追加；标题+内容完全相同的视为同一条跳过 */
 function mergeArchive(list) {
   const map = new Map(prompts.map((p) => [p.id, p]));
-  let added = 0, updated = 0;
+  const fingerprints = new Set(prompts.map((p) => p.title + "\u0000" + p.content));
+  let added = 0, updated = 0, skipped = 0;
   for (const raw of list) {
     const item = normalizeImported(raw);
     if (!item) continue;
-    if (map.has(item.id)) updated++; else added++;
+    if (map.has(item.id)) {
+      updated++;
+      map.set(item.id, item);
+      continue;
+    }
+    const fingerprint = item.title + "\u0000" + item.content;
+    if (fingerprints.has(fingerprint)) { skipped++; continue; }
+    added++;
     map.set(item.id, item);
+    fingerprints.add(fingerprint);
   }
   prompts = [...map.values()];
-  return { added, updated };
+  return { added, updated, skipped };
+}
+
+function mergeSummaryText({ added, updated, skipped }) {
+  let text = `新增 ${added} 条，更新 ${updated} 条`;
+  if (skipped > 0) text += `，忽略重复 ${skipped} 条`;
+  return text;
 }
 
 /* ---------------- 事件绑定 ---------------- */
@@ -462,10 +477,10 @@ els.importFile.addEventListener("change", () => {
     try {
       const data = JSON.parse(reader.result);
       if (!Array.isArray(data)) throw new Error("格式不对");
-      const { added, updated } = mergeArchive(data);
+      const res = mergeArchive(data);
       save();
       render();
-      showToast(`导入完成：新增 ${added} 条，更新 ${updated} 条`);
+      showToast(`导入完成：${mergeSummaryText(res)}`);
     } catch {
       showToast("导入失败：不是有效的备份 JSON 文件");
     }
@@ -539,11 +554,11 @@ async function cloudRestore() {
     setCloudStatus("拉取失败：所有云端源都不可达。请检查网络，或确认仓库里已存在 " + GH.path, "err");
     return;
   }
-  const { added, updated } = mergeArchive(list);
+  const { added, updated, skipped } = mergeArchive(list);
   save();
   render();
   const host = usedSrc.includes("://") ? new URL(usedSrc).hostname : location.host;
-  setCloudStatus(`恢复完成 ✓（来源：${host}）新增 ${added} 条，更新 ${updated} 条`, "ok");
+  setCloudStatus(`恢复完成 ✓（来源：${host}）${mergeSummaryText({ added, updated, skipped })}`, "ok");
 }
 
 async function cloudBackup() {
