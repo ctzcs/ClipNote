@@ -29,6 +29,7 @@
         <button id="themeBtn" class="btn btn-ghost" title="切换深色 / 浅色模式">
           <span id="themeIcon">🌙</span>
         </button>
+        <button id="cloudBtn" class="btn btn-ghost" title="云端存档：恢复 / 备份">☁️ 云端</button>
         <button id="exportBtn" class="btn btn-ghost" title="导出全部提示词为 JSON 备份">导出</button>
         <button id="importBtn" class="btn btn-ghost" title="从 JSON 备份导入">导入</button>
         <input id="importFile" type="file" accept=".json,application/json" hidden />
@@ -107,6 +108,35 @@
           <button id="editorCancel" class="btn btn-ghost">取消</button>
           <button id="editorSave" class="btn btn-primary">保存</button>
         </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 云端存档弹窗 -->
+  <div id="cloudOverlay" class="overlay" hidden>
+    <div class="modal modal-sm" role="dialog" aria-modal="true">
+      <div class="modal-head">
+        <h3>☁️ 云端存档</h3>
+        <button id="cloudClose" class="btn btn-ghost btn-icon" title="关闭">✕</button>
+      </div>
+      <div class="modal-body">
+        <p class="cloud-desc">存档保存在 GitHub 仓库 <code>ctzcs/ClipNote</code> 的 <code>data/prompts.json</code>。
+        恢复会把云端存档<strong>合并</strong>到本机（不会删除本地已有条目）；备份会用本机数据<strong>覆盖</strong>云端存档。<br>
+        <span class="cloud-warn">注意：存档内容在公开仓库中任何人可见，不要存放敏感提示词。</span></p>
+        <div class="cloud-actions">
+          <button id="cloudRestore" class="btn btn-primary">⬇️ 从云端恢复</button>
+          <button id="cloudBackup" class="btn btn-ghost">⬆️ 备份到云端</button>
+        </div>
+        <label class="field">
+          <span class="field-label">GitHub Token <small>（仅「备份到云端」需要。建议申请 Fine-grained Token，只授予本仓库的 Contents 读写权限；Token 只保存在本机浏览器里）</small></span>
+          <input id="fToken" type="password" placeholder="github_pat_… 或 ghp_…" autocomplete="off" />
+        </label>
+        <div class="cloud-token-row">
+          <button id="cloudSaveToken" class="btn btn-ghost">保存 Token</button>
+          <button id="cloudClearToken" class="btn btn-ghost">清除 Token</button>
+          <span id="cloudTokenState" class="cloud-state"></span>
+        </div>
+        <div id="cloudStatus" class="cloud-state"></div>
       </div>
     </div>
   </div>

@@ -6,6 +6,22 @@
 
 const STORE_KEY = "clipnote.prompts.v1";
 const SETTINGS_KEY = "clipnote.settings.v1";
+const TOKEN_KEY = "clipnote.gh.token.v1";
+
+/* 云端存档：存放在自己 GitHub 仓库里的 data/prompts.json */
+const GH = {
+  owner: "ctzcs",
+  repo: "ClipNote",
+  branch: "main",
+  path: "data/prompts.json",
+  // 恢复数据源按顺序尝试（任一成功即用）：同源 → jsDelivr CDN（国内友好）→ GitHub Pages → raw.githubusercontent
+  sources: [
+    "data/prompts.json",
+    "https://cdn.jsdelivr.net/gh/ctzcs/ClipNote@main/data/prompts.json",
+    "https://ctzcs.github.io/ClipNote/data/prompts.json",
+    "https://raw.githubusercontent.com/ctzcs/ClipNote/main/data/prompts.json",
+  ],
+};
 
 /* ---------------- 状态 ---------------- */
 let prompts = [];               // 全部提示词
@@ -31,6 +47,11 @@ const els = {
   confirmOverlay: $("confirmOverlay"), confirmText: $("confirmText"),
   confirmOk: $("confirmOk"), confirmCancel: $("confirmCancel"),
   toast: $("toast"),
+  // 云端存档
+  cloudBtn: $("cloudBtn"), cloudOverlay: $("cloudOverlay"), cloudClose: $("cloudClose"),
+  cloudRestore: $("cloudRestore"), cloudBackup: $("cloudBackup"),
+  fToken: $("fToken"), cloudSaveToken: $("cloudSaveToken"), cloudClearToken: $("cloudClearToken"),
+  cloudTokenState: $("cloudTokenState"), cloudStatus: $("cloudStatus"),
 };
 
 /* ---------------- 工具函数 ---------------- */
@@ -127,9 +148,12 @@ function seed() {
 }
 
 /* ---------------- 设置（主题 / 排序） ---------------- */
+function readSettings() {
+  try { return JSON.parse(localStorage.getItem(SETTINGS_KEY)) || {}; } catch { return {}; }
+}
+
 function loadSettings() {
-  let s = {};
-  try { s = JSON.parse(localStorage.getItem(SETTINGS_KEY)) || {}; } catch { /* 忽略 */ }
+  const s = readSettings();
   const theme = s.theme || (matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
   applyTheme(theme);
   if (s.sort) els.sortSelect.value = s.sort;
@@ -290,6 +314,36 @@ function askDelete(p) {
   els.confirmOverlay.hidden = false;
 }
 
+/* ---------------- 导入 / 云端共用：数据规整与合并 ---------------- */
+function normalizeImported(raw) {
+  if (!raw || typeof raw.title !== "string" || typeof raw.content !== "string") return null;
+  return {
+    id: typeof raw.id === "string" ? raw.id : uid(),
+    title: raw.title.slice(0, 100),
+    content: raw.content,
+    tags: Array.isArray(raw.tags) ? raw.tags.map(String).slice(0, 10) : [],
+    pinned: !!raw.pinned,
+    useCount: Number(raw.useCount) || 0,
+    lastUsedAt: Number(raw.lastUsedAt) || null,
+    createdAt: Number(raw.createdAt) || Date.now(),
+    updatedAt: Number(raw.updatedAt) || Date.now(),
+  };
+}
+
+/* 按 id 合并：同 id 覆盖（来源为准），新 id 追加；不删除本地已有条目 */
+function mergeArchive(list) {
+  const map = new Map(prompts.map((p) => [p.id, p]));
+  let added = 0, updated = 0;
+  for (const raw of list) {
+    const item = normalizeImported(raw);
+    if (!item) continue;
+    if (map.has(item.id)) updated++; else added++;
+    map.set(item.id, item);
+  }
+  prompts = [...map.values()];
+  return { added, updated };
+}
+
 /* ---------------- 事件绑定 ---------------- */
 // 侧栏筛选（事件委托，覆盖“全部/收藏/标签”两个容器）
 function onFilterClick(e) {
@@ -408,25 +462,7 @@ els.importFile.addEventListener("change", () => {
     try {
       const data = JSON.parse(reader.result);
       if (!Array.isArray(data)) throw new Error("格式不对");
-      const map = new Map(prompts.map((p) => [p.id, p]));
-      let added = 0, updated = 0;
-      for (const raw of data) {
-        if (!raw || typeof raw.title !== "string" || typeof raw.content !== "string") continue;
-        const item = {
-          id: typeof raw.id === "string" ? raw.id : uid(),
-          title: raw.title.slice(0, 100),
-          content: raw.content,
-          tags: Array.isArray(raw.tags) ? raw.tags.map(String).slice(0, 10) : [],
-          pinned: !!raw.pinned,
-          useCount: Number(raw.useCount) || 0,
-          lastUsedAt: Number(raw.lastUsedAt) || null,
-          createdAt: Number(raw.createdAt) || Date.now(),
-          updatedAt: Number(raw.updatedAt) || Date.now(),
-        };
-        if (map.has(item.id)) { updated++; } else { added++; }
-        map.set(item.id, item);
-      }
-      prompts = [...map.values()];
+      const { added, updated } = mergeArchive(data);
       save();
       render();
       showToast(`导入完成：新增 ${added} 条，更新 ${updated} 条`);
@@ -437,7 +473,158 @@ els.importFile.addEventListener("change", () => {
   reader.readAsText(file);
 });
 
-// 快捷键
+/* ---------------- 云端存档 ---------------- */
+function ghHeaders(token) {
+  return { Authorization: `Bearer ${token}`, Accept: "application/vnd.github+json" };
+}
+
+function setCloudStatus(msg, cls) {
+  els.cloudStatus.textContent = msg;
+  els.cloudStatus.className = "cloud-state" + (cls ? " " + cls : "");
+}
+
+function refreshCloudTokenState() {
+  const has = !!localStorage.getItem(TOKEN_KEY);
+  els.cloudTokenState.textContent = has ? "已保存 ✓" : "未保存（仅恢复时不需要）";
+  els.cloudTokenState.classList.toggle("ok", has);
+}
+
+function openCloud() {
+  refreshCloudTokenState();
+  setCloudStatus("");
+  els.cloudOverlay.hidden = false;
+}
+
+function closeCloud() {
+  els.cloudOverlay.hidden = true;
+}
+
+/* UTF-8 安全的 base64（分块拼接，避免大内容撑爆调用栈） */
+function b64utf8(str) {
+  const bytes = new TextEncoder().encode(str);
+  let bin = "";
+  for (let i = 0; i < bytes.length; i += 0x8000) {
+    bin += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+  }
+  return btoa(bin);
+}
+
+async function fetchWithTimeout(url, ms = 8000) {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), ms);
+  try {
+    const sep = url.includes("?") ? "&" : "?";
+    const res = await fetch(url + sep + "_=" + Date.now(), { signal: ctrl.signal });
+    if (!res.ok) throw new Error("HTTP " + res.status);
+    return res;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function cloudRestore() {
+  setCloudStatus("正在从云端拉取存档…");
+  let list = null, usedSrc = "";
+  for (const src of GH.sources) {
+    try {
+      const res = await fetchWithTimeout(src);
+      const data = await res.json();
+      if (!Array.isArray(data)) throw new Error("格式不对");
+      list = data;
+      usedSrc = src;
+      break;
+    } catch { /* 换下一个源继续 */ }
+  }
+  if (!list) {
+    setCloudStatus("拉取失败：所有云端源都不可达。请检查网络，或确认仓库里已存在 " + GH.path, "err");
+    return;
+  }
+  const { added, updated } = mergeArchive(list);
+  save();
+  render();
+  const host = usedSrc.includes("://") ? new URL(usedSrc).hostname : location.host;
+  setCloudStatus(`恢复完成 ✓（来源：${host}）新增 ${added} 条，更新 ${updated} 条`, "ok");
+}
+
+async function cloudBackup() {
+  const token = localStorage.getItem(TOKEN_KEY);
+  if (!token) {
+    setCloudStatus("请先在下方粘贴并保存 Token（只有备份需要，恢复不需要）", "err");
+    els.fToken.focus();
+    return;
+  }
+  setCloudStatus("正在上传存档…");
+  try {
+    let sha;
+    const head = await fetch(
+      `https://api.github.com/repos/${GH.owner}/${GH.repo}/contents/${GH.path}?ref=${GH.branch}`,
+      { headers: ghHeaders(token) }
+    );
+    if (head.ok) sha = (await head.json()).sha;
+
+    const res = await fetch(
+      `https://api.github.com/repos/${GH.owner}/${GH.repo}/contents/${GH.path}`,
+      {
+        method: "PUT",
+        headers: { ...ghHeaders(token), "Content-Type": "application/json" },
+        body: JSON.stringify({
+          message: "ClipNote cloud archive update",
+          content: b64utf8(JSON.stringify(prompts, null, 2)),
+          branch: GH.branch,
+          ...(sha ? { sha } : {}),
+        }),
+      }
+    );
+    if (!res.ok) throw new Error("HTTP " + res.status + "：" + (await res.text()).slice(0, 140));
+
+    const s = readSettings();
+    s.lastCloudSync = Date.now();
+    localStorage.setItem(SETTINGS_KEY, JSON.stringify(s));
+    setCloudStatus(`备份成功 ✓ ${prompts.length} 条已上传到 GitHub，Pages 约 1 分钟后自动更新。`, "ok");
+  } catch (e) {
+    setCloudStatus("备份失败：" + e.message, "err");
+  }
+}
+
+async function cloudSaveToken() {
+  const token = els.fToken.value.trim();
+  if (!token) {
+    els.fToken.focus();
+    setCloudStatus("请先粘贴 Token", "err");
+    return;
+  }
+  setCloudStatus("正在验证 Token…");
+  try {
+    const user = await fetch("https://api.github.com/user", { headers: ghHeaders(token) });
+    if (!user.ok) throw new Error("Token 无效（HTTP " + user.status + "）");
+    const repo = await fetch(`https://api.github.com/repos/${GH.owner}/${GH.repo}`, { headers: ghHeaders(token) });
+    if (!repo.ok) throw new Error(`Token 无权访问仓库 ${GH.owner}/${GH.repo}，请检查仓库授权与 Contents 权限`);
+    localStorage.setItem(TOKEN_KEY, token);
+    els.fToken.value = "";
+    refreshCloudTokenState();
+    setCloudStatus("Token 已验证并保存到本机 ✓", "ok");
+  } catch (e) {
+    setCloudStatus("验证失败：" + e.message, "err");
+  }
+}
+
+function cloudClearToken() {
+  localStorage.removeItem(TOKEN_KEY);
+  els.fToken.value = "";
+  refreshCloudTokenState();
+  setCloudStatus("已清除本机保存的 Token");
+}
+
+// 云端存档
+els.cloudBtn.addEventListener("click", openCloud);
+els.cloudClose.addEventListener("click", closeCloud);
+els.cloudOverlay.addEventListener("mousedown", (e) => { if (e.target === els.cloudOverlay) closeCloud(); });
+els.cloudRestore.addEventListener("click", cloudRestore);
+els.cloudBackup.addEventListener("click", cloudBackup);
+els.cloudSaveToken.addEventListener("click", cloudSaveToken);
+els.cloudClearToken.addEventListener("click", cloudClearToken);
+
+/* ---------------- 快捷键 ---------------- */
 document.addEventListener("keydown", (e) => {
   if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "k") {
     e.preventDefault();
@@ -449,6 +636,7 @@ document.addEventListener("keydown", (e) => {
   } else if (e.key === "Escape") {
     if (!els.confirmOverlay.hidden) { els.confirmOverlay.hidden = true; deletingId = null; }
     else if (!els.editorOverlay.hidden) closeEditor();
+    else if (!els.cloudOverlay.hidden) closeCloud();
   } else if (e.key === "Enter" && (e.ctrlKey || e.metaKey) && !els.editorOverlay.hidden) {
     saveEditor();
   }
