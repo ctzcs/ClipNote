@@ -1,0 +1,9 @@
+# 编辑器 / 工具本地配置
+.zcodeignore
+.zcode/
+.vscode/
+.idea/
+
+# 系统文件
+Thumbs.db
+.DS_Store
