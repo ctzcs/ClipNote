@@ -570,26 +570,31 @@ async function cloudBackup() {
   }
   setCloudStatus("正在上传存档…");
   try {
-    let sha;
-    const head = await fetch(
-      `https://api.github.com/repos/${GH.owner}/${GH.repo}/contents/${GH.path}?ref=${GH.branch}`,
-      { headers: ghHeaders(token) }
-    );
-    if (head.ok) sha = (await head.json()).sha;
+    let res;
+    for (let attempt = 0; attempt < 2; attempt++) {
+      let sha;
+      const head = await fetch(
+        `https://api.github.com/repos/${GH.owner}/${GH.repo}/contents/${GH.path}?ref=${GH.branch}`,
+        { headers: ghHeaders(token) }
+      );
+      if (head.ok) sha = (await head.json()).sha;
 
-    const res = await fetch(
-      `https://api.github.com/repos/${GH.owner}/${GH.repo}/contents/${GH.path}`,
-      {
-        method: "PUT",
-        headers: { ...ghHeaders(token), "Content-Type": "application/json" },
-        body: JSON.stringify({
-          message: "ClipNote cloud archive update",
-          content: b64utf8(JSON.stringify(prompts, null, 2)),
-          branch: GH.branch,
-          ...(sha ? { sha } : {}),
-        }),
-      }
-    );
+      res = await fetch(
+        `https://api.github.com/repos/${GH.owner}/${GH.repo}/contents/${GH.path}`,
+        {
+          method: "PUT",
+          headers: { ...ghHeaders(token), "Content-Type": "application/json" },
+          body: JSON.stringify({
+            message: "ClipNote cloud archive update",
+            content: b64utf8(JSON.stringify(prompts, null, 2)),
+            branch: GH.branch,
+            ...(sha ? { sha } : {}),
+          }),
+        }
+      );
+      // 409 = 云端文件刚被其他备份改过（如连点两次按钮/双机同时备份），重取 sha 再试一次
+      if (res.status !== 409) break;
+    }
     if (!res.ok) throw new Error("HTTP " + res.status + "：" + (await res.text()).slice(0, 140));
 
     const s = readSettings();
