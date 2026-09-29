@@ -1,24 +1,13 @@
 [
   {
-    "id": "mumhro42dof943",
-    "title": "示例：代码审查助手",
-    "content": "你是一位资深代码审查员。请审查我贴出的代码，重点关注：\n1. 潜在 bug 与边界条件\n2. 安全隐患\n3. 可读性与命名\n\n按严重程度排列问题，最后给出修改后的完整代码。不要客套，直接指出问题。",
-    "tags": ["编码", "示例"],
-    "pinned": true,
-    "useCount": 1,
-    "lastUsedAt": 1790675791243,
-    "createdAt": 1790675180498,
-    "updatedAt": 1790675180498
-  },
-  {
-    "id": "mumhro42ky9mct",
-    "title": "示例：周报生成",
-    "content": "根据我列出的本周工作流水账，生成一份结构化的周报，包含：本周完成、进行中、下周计划、风险与需要支持。语言简洁，用要点列表，不要夸大成果。",
-    "tags": ["写作", "示例"],
+    "id": "mumprr1prey6jr",
+    "title": "视频转HTML",
+    "content": "帮我看这个视频，摘取全部主要内容以及时间节点，生成一个html文件，方便我重看，以及摘录",
+    "tags": [],
     "pinned": false,
     "useCount": 0,
     "lastUsedAt": null,
-    "createdAt": 1790675180498,
-    "updatedAt": 1790675180498
+    "createdAt": 1790688621229,
+    "updatedAt": 1790688621229
   }
 ]
